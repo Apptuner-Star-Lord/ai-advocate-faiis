@@ -652,9 +652,9 @@ Please provide a professional legal response based on the context above:"""
                         response_placeholder = st.empty()
                         
                         for chunk in llm.stream(full_prompt):
-                            print(chunk)
+                            print(type(chunk), chunk)
                             full_response += chunk
-                            response_placeholder.markdown(full_response + "▋")
+                            response_placeholder.markdown(full_response + "▋", unsafe_allow_html=True)
                         
                         # Final response without cursor
                         response_placeholder.markdown(full_response)
