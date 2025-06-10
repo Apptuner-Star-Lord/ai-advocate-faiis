@@ -311,7 +311,7 @@ def init_models():
         vectordb = FAISS.load_local("legal_qa_faiss_index", embeddings, allow_dangerous_deserialization=True)
 
         # Initialize LLM
-        llm = OllamaLLM(model="mistral", temperature=0.1, max_tokens=512)
+        llm = OllamaLLM(base_url='https://9052-112-196-43-19.ngrok-free.app/' ,model="mistral", temperature=0.1, max_tokens=512)
 
         return vectordb, llm
     except Exception as e:
