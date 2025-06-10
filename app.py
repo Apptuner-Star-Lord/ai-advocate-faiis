@@ -652,6 +652,7 @@ Please provide a professional legal response based on the context above:"""
                         response_placeholder = st.empty()
                         
                         for chunk in llm.stream(full_prompt):
+                            print(chunk)
                             full_response += chunk
                             response_placeholder.markdown(full_response + "▋")
                         
