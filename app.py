@@ -1,8 +1,5 @@
 import streamlit as st
-import sqlite3
-import uuid
-import json
-import re
+import sqlite3, uuid, json, re, os
 from datetime import datetime
 from time import sleep
 import pytesseract
@@ -15,214 +12,323 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.memory import ConversationBufferMemory
 from langchain.schema.messages import HumanMessage, AIMessage
 
-# __import__('pysqlite3')
-# import sys
-# sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
 # Configure page
 st.set_page_config(
     page_title="Legal Adviser Bot",
     page_icon="⚖️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS for button styling
+# Enhanced CSS for Claude-like UI
 st.markdown("""
 <style>
-/* Primary buttons (New Chat button) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Global styling */
+* {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Hide Streamlit branding */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Main container */
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+    max-width: 1200px;
+}
+
+/* Chat message styling - Claude-like */
+.stChatMessage {
+    background-color: transparent;
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+}
+
+.stChatMessage[data-testid="chat-message-user"] {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    margin-left: 20%;
+    border-radius: 18px 18px 4px 18px;
+}
+
+.stChatMessage[data-testid="chat-message-assistant"] {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 18px 18px 18px 4px;
+    margin-right: 10%;
+}
+
+/* Suggestion pills styling */
+.suggestion-pill {
+    display: inline-block;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 8px 16px;
+    margin: 4px 8px 4px 0;
+    border-radius: 20px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    text-decoration: none;
+}
+
+.suggestion-pill:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+}
+
+/* Document analysis card */
+.doc-analysis-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin: 1rem 0;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+}
+
+.doc-analysis-card h3 {
+    margin-top: 0;
+    font-weight: 600;
+}
+
+/* Action buttons container */
+.action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 1rem 0;
+}
+
+/* Primary buttons */
 .stButton > button[kind="primary"] {
-    background-color: #0068C9 !important;  /* Blue */
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: bold !important;
-    transition: all 0.3s ease !important;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    padding: 0.6rem 1.2rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .stButton > button[kind="primary"]:hover {
-    background-color: #1E82D7 !important;  /* Light Blue on hover */
-    transform: translateY(-2px) !important;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
 }
 
-/* Secondary buttons (Chat selection buttons) */
+/* Secondary buttons */
 .stButton > button[kind="secondary"] {
-    background-color: #37474F !important;  /* Blue-gray */
-    color: white !important;
-    border: 1px solid #546E7A !important;
-    border-radius: 6px !important;
-    transition: all 0.3s ease !important;
+    background-color: white;
+    color: #495057;
+    border: 1.5px solid #dee2e6;
+    border-radius: 8px;
+    font-weight: 500;
+    padding: 0.6rem 1.2rem;
+    transition: all 0.3s ease;
 }
 
 .stButton > button[kind="secondary"]:hover {
-    background-color: #455A64 !important;
-    border-color: #78909C !important;
-    transform: translateY(-1px) !important;
-}
-
-/* Delete buttons */
-.stButton > button:has([title="Delete chat"]) {
-    background-color: #D32F2F !important;  /* Red */
-    color: white !important;
-    border: none !important;
-    border-radius: 50% !important;
-    width: 35px !important;
-    height: 35px !important;
-    padding: 0 !important;
-    transition: all 0.3s ease !important;
-}
-
-.stButton > button:has([title="Delete chat"]):hover {
-    background-color: #B71C1C !important;  /* Darker red */
-    transform: scale(1.1) !important;
-    box-shadow: 0 2px 6px rgba(211, 47, 47, 0.4) !important;
-}
-
-/* Send button styling */
-.stButton > button[data-testid="baseButton-secondary"] {
-    background: linear-gradient(45deg, #1976D2, #42A5F5) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 20px !important;
-    padding: 0.5rem 1.5rem !important;
-    font-weight: 600 !important;
-    transition: all 0.3s ease !important;
-}
-
-.stButton > button[data-testid="baseButton-secondary"]:hover {
-    background: linear-gradient(45deg, #1565C0, #1E88E5) !important;
-    transform: translateY(-2px) !important;
-    box-shadow: 0 4px 12px rgba(25, 118, 210, 0.3) !important;
-}
-
-/* Active chat button */
-.stButton > button[kind="primary"][aria-pressed="true"] {
-    background: linear-gradient(45deg, #FF6B35, #FF8E53) !important;  /* Orange gradient for active */
-    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3) !important;
-}
-
-/* File uploader button */
-.stFileUploader > div > button {
-    background-color: #6A1B9A !important;  /* Purple */
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    transition: all 0.3s ease !important;
-}
-
-.stFileUploader > div > button:hover {
-    background-color: #4A148C !important;  /* Darker purple */
-    transform: translateY(-1px) !important;
-}
-
-/* Custom button class for special styling */
-.custom-legal-button {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 12px !important;
-    padding: 0.6rem 1.2rem !important;
-    font-weight: 600 !important;
-    font-size: 0.9rem !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
-}
-
-.custom-legal-button:hover {
-    transform: translateY(-2px) scale(1.02) !important;
-    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3) !important;
+    background-color: #f8f9fa;
+    border-color: #667eea;
+    color: #667eea;
+    transform: translateY(-1px);
 }
 
 /* Sidebar styling */
-.css-1d391kg {  /* Sidebar background */
-    background-color: #F8F9FA !important;
+.css-1d391kg {
+    background: linear-gradient(180deg, #f8f9fa 0%, #ffffff 100%);
+    border-right: 1px solid #e9ecef;
 }
 
-/* Make buttons more responsive */
+/* Chat input styling */
+.stChatInputContainer {
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    background-color: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.stChatInputContainer:focus-within {
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+/* File uploader styling */
+.stFileUploader {
+    border: 2px dashed #dee2e6;
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    transition: all 0.3s ease;
+}
+
+.stFileUploader:hover {
+    border-color: #667eea;
+    background: linear-gradient(135deg, #f0f4ff 0%, #ffffff 100%);
+}
+
+/* Success/Error messages */
+.stSuccess {
+    background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+    border: 1px solid #c3e6cb;
+    border-radius: 8px;
+    color: #155724;
+}
+
+.stError {
+    background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+    border: 1px solid #f5c6cb;
+    border-radius: 8px;
+    color: #721c24;
+}
+
+/* Expander styling */
+.streamlit-expander {
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    background-color: #f8f9fa;
+}
+
+/* Loading spinner */
+.stSpinner {
+    text-align: center;
+}
+
+/* Responsive design */
 @media (max-width: 768px) {
-    .stButton > button {
-        font-size: 0.8rem !important;
-        padding: 0.4rem 0.8rem !important;
+    .main .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
+    
+    .stChatMessage[data-testid="chat-message-user"] {
+        margin-left: 5%;
+    }
+    
+    .stChatMessage[data-testid="chat-message-assistant"] {
+        margin-right: 5%;
+    }
+}
+
+/* Typing indicator */
+.typing-indicator {
+    display: flex;
+    align-items: center;
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 18px 18px 18px 4px;
+    margin-right: 10%;
+    margin-bottom: 1rem;
+}
+
+.typing-dots {
+    display: flex;
+    gap: 4px;
+}
+
+.typing-dots span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #667eea;
+    animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+.typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typing {
+    0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
 }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Greeting Detection Functions ---
-def is_greeting_or_casual(text):
-    """
-    Check if the input is a greeting or casual conversation that doesn't require legal expertise
-    """
-    text_lower = text.lower().strip()
+# --- Suggestion Functions ---
+def get_document_suggestions(doc_type, extracted_text=""):
+    """Generate contextual suggestions based on document type and content"""
     
-    # Common greetings
-    greetings = [
-        r'\b(hi|hello|hey|hii|hiii|heyyy)\b',
-        r'\bhow are you\b',
-        r'\bhow\'s it going\b',
-        r'\bgood morning\b',
-        r'\bgood afternoon\b',
-        r'\bgood evening\b',
-        r'\bnice to meet you\b',
-        r'\bthanks?\b',
-        r'\bthank you\b',
-        r'\bokay?\b',
-        r'\bok\b',
-        r'\byes\b',
-        r'\bno\b',
-        r'\bbye\b',
-        r'\bgoodbye\b',
-        r'\bsee you\b',
-        r'\btake care\b',
-        r'\bwhat\'s up\b',
-        r'\bwassup\b',
-        r'\bhru\b',  # how are you
-        r'\bwbu\b',  # what about you
-    ]
-    
-    for pattern in greetings:
-        if re.search(pattern, text_lower):
-            return True
-    
-    # Check if it's a very short message (likely casual)
-    if len(text_lower.split()) <= 3 and not any(legal_word in text_lower for legal_word in 
-        ['law', 'legal', 'court', 'case', 'lawyer', 'attorney', 'contract', 'agreement', 'notice', 'sue', 'rights']):
-        return True
-    
-    return False
-
-def get_casual_response(text):
-    """
-    Generate appropriate casual responses for greetings and simple conversations
-    """
-    text_lower = text.lower().strip()
-    
-    if any(greeting in text_lower for greeting in ['hi', 'hello', 'hey']):
-        return "Hello! I'm your Legal Adviser Bot. I'm here to help you with legal questions and document analysis. How can I assist you today? ⚖️"
-    
-    elif 'how are you' in text_lower:
-        return "I'm doing well, thank you for asking! I'm ready to help you with any legal questions or document analysis you might need. What legal matter can I assist you with today?"
-    
-    elif any(thanks in text_lower for thanks in ['thank', 'thanks']):
-        return "You're welcome! I'm always here to help with your legal questions. Is there anything else you'd like to know about legal matters?"
-    
-    elif text_lower in ['ok', 'okay', 'yes', 'no']:
-        return "I'm here whenever you need legal assistance. Feel free to ask me about legal documents, Indian law, or any legal questions you might have!"
-    
-    elif any(bye in text_lower for bye in ['bye', 'goodbye', 'see you']):
-        return "Goodbye! Remember, I'm always here whenever you need legal guidance or document analysis. Take care! ⚖️"
-    
-    elif 'good morning' in text_lower:
-        return "Good morning! I hope you're having a great day. I'm your Legal Adviser Bot, ready to help with any legal questions or document analysis you need."
-    
-    elif 'good afternoon' in text_lower:
-        return "Good afternoon! I'm your Legal Adviser Bot, here to assist you with legal questions and document analysis. How can I help you today?"
-    
-    elif 'good evening' in text_lower:
-        return "Good evening! I'm ready to help you with any legal matters or document analysis you might need. What can I assist you with?"
-    
+    if "legal notice" in extracted_text.lower() or "notice" in doc_type.lower():
+        return [
+            "📝 Draft a professional reply to this legal notice",
+            "⚖️ Analyze the legal claims mentioned",
+            "📋 Check compliance requirements",
+            "🕐 Review response timeline and deadlines",
+            "💡 Suggest negotiation strategies"
+        ]
+    elif "contract" in extracted_text.lower() or "agreement" in extracted_text.lower():
+        return [
+            "📊 Review contract terms and conditions",
+            "⚠️ Identify potential legal risks",
+            "🔍 Check for missing clauses",
+            "💰 Analyze payment and penalty terms",
+            "📅 Review termination conditions"
+        ]
+    elif "court" in extracted_text.lower() or "petition" in extracted_text.lower():
+        return [
+            "⚖️ Analyze the legal arguments",
+            "📋 Review evidence requirements",
+            "🕐 Check procedural timelines",
+            "💡 Suggest counter-arguments",
+            "📝 Draft response strategy"
+        ]
     else:
-        return "I'm your Legal Adviser Bot, specialized in helping with legal questions and document analysis. How can I assist you with legal matters today? ⚖️"
+        return [
+            "🔍 Analyze this legal document",
+            "📝 Explain key legal terms",
+            "⚖️ Identify legal implications",
+            "💡 Provide actionable advice",
+            "📋 Summarize important points"
+        ]
+
+def get_general_suggestions():
+    """Get general legal consultation suggestions"""
+    return [
+        "💼 Property law consultation",
+        "👔 Employment law guidance", 
+        "🏪 Business law advice",
+        "👨‍👩‍👧‍👦 Family law matters",
+        "🚗 Consumer rights issues",
+        "📋 Contract drafting help"
+    ]
+
+def get_follow_up_suggestions(last_response):
+    """Generate follow-up suggestions based on the last response"""
+    if "reply" in last_response.lower() or "response" in last_response.lower():
+        return [
+            "✏️ Refine the draft response",
+            "📧 Format for official communication",
+            "⏰ Set reminder for response deadline",
+            "💡 Add stronger legal arguments",
+            "👥 Review with legal counsel"
+        ]
+    elif "analysis" in last_response.lower():
+        return [
+            "📝 Get step-by-step action plan",
+            "⚖️ Understand legal precedents",
+            "💰 Estimate potential costs",
+            "🕐 Timeline for resolution",
+            "📞 When to consult a lawyer"
+        ]
+    else:
+        return [
+            "🔍 Need more details?",
+            "📋 Want a summary?",
+            "💡 Explore related topics",
+            "📝 Draft related documents",
+            "❓ Ask follow-up questions"
+        ]
 
 # --- Database Setup ---
 def init_database():
@@ -244,6 +350,7 @@ def init_database():
             content TEXT,
             retrieved_context TEXT,
             uploaded_file_text TEXT,
+            suggestions TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (chat_id) REFERENCES chats(id)
         )
@@ -266,7 +373,6 @@ conn, cursor = init_database()
 
 # --- File Processing Functions ---
 def extract_text_from_image(image):
-    """Extract text from image using OCR"""
     try:
         return pytesseract.image_to_string(image)
     except Exception as e:
@@ -274,7 +380,6 @@ def extract_text_from_image(image):
         return ""
 
 def extract_text_from_pdf(pdf_file):
-    """Extract text from PDF file"""
     try:
         text = ""
         with pdfplumber.open(pdf_file) as pdf:
@@ -288,7 +393,6 @@ def extract_text_from_pdf(pdf_file):
         return ""
 
 def save_document_to_chat(chat_id, file_name, file_type, extracted_text):
-    """Save uploaded document to chat"""
     cursor.execute(
         "INSERT INTO chat_documents (id, chat_id, file_name, file_type, extracted_text) VALUES (?, ?, ?, ?, ?)",
         (str(uuid.uuid4()), chat_id, file_name, file_type, extracted_text)
@@ -296,7 +400,6 @@ def save_document_to_chat(chat_id, file_name, file_type, extracted_text):
     conn.commit()
 
 def get_chat_documents(chat_id):
-    """Get all documents for a chat"""
     cursor.execute("SELECT file_name, file_type, extracted_text FROM chat_documents WHERE chat_id = ? ORDER BY created_at", (chat_id,))
     return cursor.fetchall()
 
@@ -304,14 +407,13 @@ def get_chat_documents(chat_id):
 @st.cache_resource
 def init_models():
     try:
-        # Initialize embedding model
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-        # Load FAISS vector store from local directory
         vectordb = FAISS.load_local("legal_qa_faiss_index", embeddings, allow_dangerous_deserialization=True)
 
-        # Initialize LLM
-        llm = OllamaLLM(base_url='https://9052-112-196-43-19.ngrok-free.app', model="mistral", temperature=0.1, max_tokens=512)
+        if os.getenv('env') == 'LOCAL':
+            llm = OllamaLLM(model="mistral", temperature=0.1, max_tokens=512)
+        else:
+            llm = OllamaLLM(base_url=os.getenv('ngrok_url'), model="mistral", temperature=0.1, max_tokens=512)
 
         return vectordb, llm
     except Exception as e:
@@ -322,48 +424,141 @@ vector_db, llm = init_models()
 
 # --- Helper Functions ---
 def load_chats():
-    """Load all chats from database"""
     cursor.execute("SELECT id, title, created_at FROM chats ORDER BY created_at DESC")
     return cursor.fetchall()
 
 def get_messages(chat_id):
-    """Get all messages for a specific chat"""
     if not chat_id:
         return []
-    cursor.execute("SELECT role, content, retrieved_context, uploaded_file_text FROM messages WHERE chat_id = ? ORDER BY created_at", (chat_id,))
+    cursor.execute("SELECT role, content, retrieved_context, uploaded_file_text, suggestions FROM messages WHERE chat_id = ? ORDER BY created_at", (chat_id,))
     return cursor.fetchall()
 
 def create_new_chat():
-    """Create a new chat session"""
     new_chat_id = str(uuid.uuid4())
-    placeholder_title = "New Chat"
+    placeholder_title = "New Legal Consultation"
     cursor.execute("INSERT INTO chats (id, title) VALUES (?, ?)", (new_chat_id, placeholder_title))
     conn.commit()
     return new_chat_id
 
 def update_chat_title(chat_id, new_title):
-    """Update chat title based on first message"""
     safe_title = new_title.strip()[:50]
     if len(safe_title) < 3:
-        safe_title = "New Chat"
+        safe_title = "Legal Consultation"
     cursor.execute("UPDATE chats SET title = ? WHERE id = ?", (safe_title, chat_id))
     conn.commit()
 
 def delete_chat(chat_id):
-    """Delete a chat and all its messages"""
     cursor.execute("DELETE FROM messages WHERE chat_id = ?", (chat_id,))
     cursor.execute("DELETE FROM chat_documents WHERE chat_id = ?", (chat_id,))
     cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
     conn.commit()
 
-def save_message(chat_id, role, content, retrieved_context=None, uploaded_file_text=None):
-    """Save a message to the database"""
+def save_message(chat_id, role, content, retrieved_context=None, uploaded_file_text=None, suggestions=None):
     context_json = json.dumps(retrieved_context) if retrieved_context else None
+    suggestions_json = json.dumps(suggestions) if suggestions else None
     cursor.execute(
-        "INSERT INTO messages (id, chat_id, role, content, retrieved_context, uploaded_file_text) VALUES (?, ?, ?, ?, ?, ?)",
-        (str(uuid.uuid4()), chat_id, role, content, context_json, uploaded_file_text)
+        "INSERT INTO messages (id, chat_id, role, content, retrieved_context, uploaded_file_text, suggestions) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), chat_id, role, content, context_json, uploaded_file_text, suggestions_json)
     )
     conn.commit()
+
+def is_greeting_or_casual(text):
+    text_lower = text.lower().strip()
+    greetings = [
+        r'\b(hi|hello|hey|hii|hiii|heyyy)\b',
+        r'\bhow are you\b',
+        r'\bhow\'s it going\b',
+        r'\bgood morning\b',
+        r'\bgood afternoon\b',
+        r'\bgood evening\b',
+        r'\bnice to meet you\b',
+        r'\bthanks?\b',
+        r'\bthank you\b',
+        r'\bokay?\b',
+        r'\bok\b',
+        r'\byes\b',
+        r'\bno\b',
+        r'\bbye\b',
+        r'\bgoodbye\b',
+        r'\bsee you\b',
+        r'\btake care\b',
+        r'\bwhat\'s up\b',
+        r'\bwassup\b',
+        r'\bhru\b',
+        r'\bwbu\b',
+    ]
+    
+    for pattern in greetings:
+        if re.search(pattern, text_lower):
+            return True
+    
+    if len(text_lower.split()) <= 3 and not any(legal_word in text_lower for legal_word in 
+        ['law', 'legal', 'court', 'case', 'lawyer', 'attorney', 'contract', 'agreement', 'notice', 'sue', 'rights']):
+        return True
+    
+    return False
+
+def get_casual_response(text):
+    text_lower = text.lower().strip()
+    
+    if any(greeting in text_lower for greeting in ['hi', 'hello', 'hey']):
+        return "Hello! I'm your AI Legal Adviser. I'm here to help you with legal questions, document analysis, and provide professional legal guidance. How can I assist you today? ⚖️"
+    elif 'how are you' in text_lower:
+        return "I'm doing well, thank you for asking! I'm ready to help you with any legal questions or document analysis you might need. What legal matter can I assist you with today?"
+    elif any(thanks in text_lower for thanks in ['thank', 'thanks']):
+        return "You're welcome! I'm always here to help with your legal questions. Is there anything else you'd like to know about legal matters?"
+    elif text_lower in ['ok', 'okay', 'yes', 'no']:
+        return "I'm here whenever you need legal assistance. Feel free to ask me about legal documents, Indian law, or any legal questions you might have!"
+    elif any(bye in text_lower for bye in ['bye', 'goodbye', 'see you']):
+        return "Goodbye! Remember, I'm always here whenever you need legal guidance or document analysis. Take care! ⚖️"
+    else:
+        return "I'm your AI Legal Adviser, specialized in helping with legal questions and document analysis. How can I assist you with legal matters today? ⚖️"
+
+def generate_legal_response(prompt, chat_history, doc_text="", retrieved_context=None):
+    """Generate enhanced legal response with context"""
+    
+    # Create context string
+    context_str = ""
+    if retrieved_context:
+        context_str = "\n\nRelevant Legal Information:\n" + "\n".join(retrieved_context)
+    
+    if doc_text:
+        context_str += f"\n\nUploaded Document Content:\n{doc_text[:1500]}..."
+    
+    # Enhanced prompt template
+    enhanced_prompt = f"""
+You are an expert AI Legal Adviser specializing in Indian law. Your role is to provide accurate, professional, and actionable legal guidance.
+
+Context Information:{context_str}
+
+Previous Conversation:
+{chat_history}
+
+Current Question: {prompt}
+
+Please provide a comprehensive response that:
+1. Addresses the specific legal question clearly
+2. References relevant laws and regulations when applicable
+3. Provides practical, actionable advice
+4. Explains complex legal terms in simple language
+5. Suggests next steps where appropriate
+6. Mentions when professional legal consultation is recommended
+
+Format your response professionally with clear sections where appropriate.
+"""
+
+    try:
+        full_response = ""
+        response_placeholder = st.empty()
+        
+        for chunk in llm.stream(enhanced_prompt):
+            print(type(chunk), chunk)
+            full_response += chunk
+            response_placeholder.markdown(full_response + "▋", unsafe_allow_html=True)
+        return full_response
+        return response
+    except Exception as e:
+        return f"I apologize, but I encountered an error while processing your request. Please try rephrasing your question or contact support if the issue persists. Error details: {str(e)}"
 
 # --- Initialize Session State ---
 if 'current_chat_id' not in st.session_state:
@@ -371,139 +566,132 @@ if 'current_chat_id' not in st.session_state:
     if chats:
         st.session_state.current_chat_id = chats[0][0]
     else:
-        # Create first chat if none exist
         st.session_state.current_chat_id = create_new_chat()
 
 if 'messages_loaded' not in st.session_state:
     st.session_state.messages_loaded = False
 
-# --- Sidebar for Chat Management ---
+if 'show_suggestions' not in st.session_state:
+    st.session_state.show_suggestions = True
+
+# --- Ensure the app displays content properly
+# st.title("⚖️ AI Legal Adviser")
+# st.markdown("*Professional legal guidance powered by AI*")
+
+# # Add a simple debug message to confirm the app is running
+# st.write("App is running successfully!")
+
+# Ensure the sidebar and main interface are initialized correctly
+# with st.sidebar:
+#     st.markdown("### 💬 Legal Consultations")
+#     st.button("✨ New Consultation")
+
+# # Add a placeholder for the main interface
+# st.markdown("### Welcome to the AI Legal Adviser")
+# st.write("Use the sidebar to start a new consultation or upload a legal document.")
+
+# --- Enhanced Sidebar ---
 with st.sidebar:
-    st.title("💬 Legal Adviser Chats")
+    st.markdown("### 💬 Legal Consultations")
     
-    # New Chat Button with custom styling
+    # New Chat Button
     col1, col2 = st.columns([3, 1])
     with col1:
-        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+        if st.button("✨ New Consultation", use_container_width=True, type="primary"):
             new_chat_id = create_new_chat()
             st.session_state.current_chat_id = new_chat_id
             st.session_state.messages_loaded = False
             st.rerun()
     
     with col2:
-        # Optional: Add a clear all chats button
         if st.button("🧹", help="Clear all chats", use_container_width=True):
             if st.session_state.get('confirm_clear', False):
-                # Clear all chats
                 cursor.execute("DELETE FROM messages")
                 cursor.execute("DELETE FROM chat_documents")
                 cursor.execute("DELETE FROM chats")
                 conn.commit()
                 st.session_state.current_chat_id = create_new_chat()
                 st.session_state.confirm_clear = False
-                st.markdown(
-                    """
-                    <div style="
-                        position: fixed;
-                        top: 20px;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        background-color: #d4edda;
-                        color: #155724;
-                        padding: 12px 24px;
-                        border: 1px solid #c3e6cb;
-                        border-radius: 8px;
-                        z-index: 9999;
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                    ">
-                        ✅ All chats cleared!
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                st.success("✅ All chats cleared!")
                 st.rerun()
             else:
                 st.session_state.confirm_clear = True
-                st.markdown(
-                    """
-                    <div style="
-                        position: fixed;
-                        top: 20px;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        background-color: #fff3cd;
-                        color: #856404;
-                        padding: 12px 24px;
-                        border: 1px solid #ffeeba;
-                        border-radius: 8px;
-                        z-index: 9999;
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                    ">
-                        ⚠️ Click again to confirm clearing all chats
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                st.warning("⚠️ Click again to confirm")
     
     st.divider()
     
-    # Load and display chats
+    # Display chats
     chats = load_chats()
     
     if chats:
-        st.subheader("Recent Chats")
-        
         for chat_id, title, created_at in chats:
-            # Create a container for each chat
             chat_container = st.container()
             
             with chat_container:
                 col1, col2 = st.columns([4, 1])
                 
                 with col1:
-                    # Chat selection button
                     if st.button(
-                        title if title != "New Chat" else "💭 New Chat",
+                        title,
                         key=f"chat_{chat_id}",
                         use_container_width=True,
-                        type="secondary" if chat_id != st.session_state.current_chat_id else "primary"
+                        type="primary" if chat_id == st.session_state.current_chat_id else "secondary"
                     ):
                         st.session_state.current_chat_id = chat_id
                         st.session_state.messages_loaded = False
                         st.rerun()
                 
                 with col2:
-                    # Delete button
                     if st.button("🗑️", key=f"delete_{chat_id}", help="Delete chat"):
                         delete_chat(chat_id)
-                        
-                        # Select another chat or create new one
                         remaining_chats = load_chats()
                         if remaining_chats:
                             st.session_state.current_chat_id = remaining_chats[0][0]
                         else:
                             st.session_state.current_chat_id = create_new_chat()
-                        
                         st.session_state.messages_loaded = False
                         st.rerun()
     else:
-        st.info("No chats yet. Create your first chat!")
+        st.info("💡 No consultations yet. Start your first legal consultation!")
 
-# --- Main Chat Interface ---
-st.title("⚖️ Legal Adviser Bot")
-st.markdown("*Ask me legal questions and I'll provide professional legal guidance*")
+# --- Main Interface ---
+st.markdown("# ⚖️ AI Legal Adviser")
+st.markdown("*Professional legal guidance powered by AI*")
 
-# File Upload Section
-st.subheader("📁 Upload Legal Document (Optional)")
-uploaded_file = st.file_uploader(
-    "Upload Legal Notice/Document (PDF/Image)", 
-    type=["pdf", "png", "jpg", "jpeg"],
-    key=f"file_upload_{st.session_state.current_chat_id}"
-)
+# Enhanced File Upload Section
+st.markdown("### 📁 Upload Legal Document")
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    uploaded_file = st.file_uploader(
+        "Drop your legal document here or click to browse",
+        type=["pdf", "png", "jpg", "jpeg"],
+        key=f"file_upload_{st.session_state.current_chat_id}",
+        help="Supported formats: PDF, PNG, JPG, JPEG"
+    )
+
+with col2:
+    if st.button("📋 Document Tips", use_container_width=True):
+        st.info("""
+        **Tips for better analysis:**
+        - Ensure text is clear and readable
+        - Upload complete documents
+        - Multiple pages? Use PDF format
+        - High resolution for image files
+        """)
 
 uploaded_text = ""
+doc_analysis_done = False
+
 if uploaded_file:
-    with st.spinner("Processing uploaded document..."):
+    with st.spinner("🔍 Analyzing your document..."):
+        progress_bar = st.progress(0)
+        
+        # Simulate progress
+        for i in range(100):
+            sleep(0.01)
+            progress_bar.progress(i + 1)
+        
         if uploaded_file.type == "application/pdf":
             uploaded_text = extract_text_from_pdf(uploaded_file)
         else:
@@ -511,190 +699,388 @@ if uploaded_file:
             uploaded_text = extract_text_from_image(image)
     
     if uploaded_text.strip():
-        # Save document to current chat
         save_document_to_chat(
             st.session_state.current_chat_id, 
             uploaded_file.name, 
             uploaded_file.type, 
             uploaded_text
         )
-        st.success(f"✅ Document '{uploaded_file.name}' processed successfully!")
         
-        with st.expander("📄 View Extracted Text"):
-            st.text_area("Extracted Content:", uploaded_text, height=200, disabled=True)
+        # Enhanced document analysis card
+        st.markdown(f"""
+        <div class="doc-analysis-card">
+            <h3>📄 Document Successfully Analyzed</h3>
+            <p><strong>File:</strong> {uploaded_file.name}</p>
+            <p><strong>Type:</strong> {uploaded_file.type}</p>
+            <p><strong>Text Extracted:</strong> {len(uploaded_text)} characters</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show suggestions based on document type
+        suggestions = get_document_suggestions(uploaded_file.name, uploaded_text)
+        
+        st.markdown("#### 💡 What would you like me to help you with?")
+        
+        # Create suggestion buttons
+        cols = st.columns(2)
+        for i, suggestion in enumerate(suggestions):
+            with cols[i % 2]:
+                if st.button(suggestion, key=f"doc_suggest_{i}", use_container_width=True):
+                    # Auto-populate chat with suggestion
+                    st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
+                    st.rerun()
+        
+        with st.expander("📄 View Extracted Content"):
+            st.text_area("Document Content:", uploaded_text, height=300, disabled=True)
+        
+        doc_analysis_done = True
     else:
-        st.error("❌ No readable text found in the document.")
+        st.error("❌ No readable text found. Please ensure the document is clear and try again.")
 
-# Display uploaded documents for current chat
+# Display chat documents summary
 chat_docs = get_chat_documents(st.session_state.current_chat_id)
 if chat_docs:
-    st.info(f"📎 {len(chat_docs)} document(s) uploaded to this chat")
+    st.info(f"📎 {len(chat_docs)} document(s) uploaded to this consultation")
 
 st.divider()
 
-# Get current chat messages
+# Display chat messages with enhanced styling
 current_messages = get_messages(st.session_state.current_chat_id)
 
-# Initialize memory with current chat messages
+# Initialize memory
 memory = ConversationBufferMemory(return_messages=True)
-for role, content, context, file_text in current_messages:
+for role, content, context, file_text, suggestions in current_messages:
     if role == "user":
         memory.chat_memory.add_user_message(content)
     elif role == "assistant":
         memory.chat_memory.add_ai_message(content)
 
-# Display chat messages with context
-for i, (role, content, retrieved_context, file_text) in enumerate(current_messages):
+# Enhanced message display
+for i, (role, content, retrieved_context, file_text, suggestions) in enumerate(current_messages):
     with st.chat_message(role):
         st.markdown(content)
         
-        # Show retrieved context for assistant messages
+        # Show suggestions for assistant messages
+        if role == "assistant" and suggestions:
+            try:
+                suggestion_list = json.loads(suggestions)
+                if suggestion_list:
+                    st.markdown("##### 💫 Continue the conversation:")
+                    cols = st.columns(min(len(suggestion_list), 3))
+                    for j, suggestion in enumerate(suggestion_list[:3]):
+                        with cols[j]:
+                            if st.button(
+                                suggestion, 
+                                key=f"msg_suggest_{i}_{j}",
+                                use_container_width=True,
+                                type="secondary"
+                            ):
+                                st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
+                                st.rerun()
+            except:
+                pass
+        
+        # Show context
         if role == "assistant" and retrieved_context:
             try:
                 context_data = json.loads(retrieved_context)
                 if context_data:
-                    with st.expander("📚 View Retrieved Legal Context"):
+                    with st.expander("📚 Legal References Used"):
                         for j, doc_content in enumerate(context_data, 1):
-                            st.markdown(f"**Document {j}:**")
-                            st.text(doc_content[:500] + "..." if len(doc_content) > 500 else doc_content)
+                            st.markdown(f"**Reference {j}:**")
+                            st.text(doc_content[:400] + "..." if len(doc_content) > 400 else doc_content)
                             if j < len(context_data):
                                 st.divider()
             except:
-                pass  # Skip if context parsing fails
+                pass
 
-# Handle new user input
-if prompt := st.chat_input("Ask your legal question..."):
+# Show general suggestions if no messages
+if not current_messages and not doc_analysis_done:
+    st.markdown("### 🚀 How can I help you today?")
+    
+    general_suggestions = get_general_suggestions()
+    cols = st.columns(2)
+    
+    for i, suggestion in enumerate(general_suggestions):
+        with cols[i % 2]:
+            if st.button(suggestion, key=f"general_{i}", use_container_width=True, type="secondary"):
+                st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
+                st.rerun()
+
+# Handle suggested prompts (continuation)
+suggested_prompt_key = f"suggested_prompt_{st.session_state.current_chat_id}"
+if suggested_prompt_key in st.session_state:
+    prompt = st.session_state[suggested_prompt_key]
+    del st.session_state[suggested_prompt_key]
+    
+    # Process the suggested prompt
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Save user message
+    save_message(st.session_state.current_chat_id, "user", prompt, uploaded_file_text=uploaded_text if uploaded_text else None)
+    
+    # Update chat title if it's a new chat
+    if not current_messages:
+        title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+        update_chat_title(st.session_state.current_chat_id, title)
+    
+    # Generate response
+    with st.chat_message("assistant"):
+        with st.spinner("🤔 Analyzing your legal question..."):
+            # Check if it's a casual greeting
+            if is_greeting_or_casual(prompt):
+                response = get_casual_response(prompt)
+                suggestions = get_general_suggestions()
+            else:
+                # Retrieve relevant context if vector DB is available
+                retrieved_context = None
+                if vector_db:
+                    try:
+                        docs = vector_db.similarity_search(prompt, k=3)
+                        retrieved_context = [doc.page_content for doc in docs]
+                    except Exception as e:
+                        st.error(f"⚠️ Context retrieval failed: {e}")
+                
+                # Get chat history for context
+                chat_history = ""
+                for role, content, _, _, _ in current_messages[-5:]:  # Last 5 messages for context
+                    chat_history += f"{role.title()}: {content}\n"
+                
+                # Generate response
+                response = generate_legal_response(
+                    prompt, 
+                    chat_history, 
+                    uploaded_text, 
+                    retrieved_context
+                )
+                
+                # Generate follow-up suggestions
+                suggestions = get_follow_up_suggestions(response)
+        
+        st.markdown(response)
+        
+        # Show follow-up suggestions
+        if suggestions:
+            st.markdown("##### 💫 Continue the conversation:")
+            cols = st.columns(min(len(suggestions), 3))
+            for j, suggestion in enumerate(suggestions[:3]):
+                with cols[j]:
+                    if st.button(
+                        suggestion, 
+                        key=f"followup_{j}",
+                        use_container_width=True,
+                        type="secondary"
+                    ):
+                        st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
+                        st.rerun()
+    
+    # Save assistant response
+    save_message(
+        st.session_state.current_chat_id, 
+        "assistant", 
+        response, 
+        retrieved_context, 
+        suggestions=suggestions
+    )
+    
+    st.rerun()
+
+# Chat input
+if prompt := st.chat_input("💬 Ask your legal question..."):
     # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
-    # Get all uploaded documents for this chat
-    all_chat_docs = get_chat_documents(st.session_state.current_chat_id)
-    combined_doc_text = "\n\n".join([doc[2] for doc in all_chat_docs])  # doc[2] is extracted_text
-    
     # Save user message
-    save_message(st.session_state.current_chat_id, "user", prompt, uploaded_file_text=combined_doc_text if combined_doc_text else None)
-    memory.chat_memory.add_user_message(prompt)
+    save_message(st.session_state.current_chat_id, "user", prompt, uploaded_file_text=uploaded_text if uploaded_text else None)
     
-    # Update chat title if it's a new chat
-    current_chat = next((chat for chat in load_chats() if chat[0] == st.session_state.current_chat_id), None)
-    if current_chat and current_chat[1] == "New Chat":
-        # Create a meaningful title from the first question
-        title_words = prompt.split()[:8]  # First 8 words
-        new_title = " ".join(title_words)
-        if len(new_title) > 50:
-            new_title = new_title[:47] + "..."
-        update_chat_title(st.session_state.current_chat_id, new_title)
+    # Update chat title for new chats
+    if not current_messages:
+        title = prompt[:50] + "..." if len(prompt) > 50 else prompt
+        update_chat_title(st.session_state.current_chat_id, title)
     
+    retrieved_context = None
     # Generate and display assistant response
     with st.chat_message("assistant"):
-        # Check if it's a greeting or casual conversation
-        if is_greeting_or_casual(prompt):
-            # Handle casual conversation without querying vector DB
-            casual_response = get_casual_response(prompt)
-            sleep(2)  # Simulate processing time
-            st.markdown(casual_response)
-            
-            # Save casual response (no context needed)
-            save_message(st.session_state.current_chat_id, "assistant", casual_response)
-            memory.chat_memory.add_ai_message(casual_response)
+        # Show typing indicator
+        typing_placeholder = st.empty()
+        typing_placeholder.markdown('''
+        <div class="typing-indicator">
+            <span style="margin-right: 10px;">AI Legal Adviser is thinking</span>
+            <div class="typing-dots">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
         
+        # Simulate thinking time
+        sleep(1)
+        typing_placeholder.empty()
+        
+        # Check if it's a casual greeting
+        if is_greeting_or_casual(prompt):
+            response = get_casual_response(prompt)
+            suggestions = get_general_suggestions()
         else:
-            # Handle legal questions with vector DB search
-            if vector_db and llm:
-                with st.spinner("🔍 Searching legal documents..."):
-                    try:
-                        # Retrieve relevant document
-                        docs = vector_db.max_marginal_relevance_search(prompt, k=3, fetch_k=10)
-                        vector_context = "\n\n".join([doc.page_content for doc in docs])
+            # Retrieve relevant context
+            if vector_db:
+                try:
+                    with st.spinner("🔍 Searching legal database..."):
+                        docs = vector_db.similarity_search(prompt, k=3)
+                        retrieved_context = [doc.page_content for doc in docs]
                         
-                        # Store context for later display
-                        retrieved_docs = [doc.page_content for doc in docs] if docs else []
-                        
-                        # Prepare context - combine vector search results with uploaded documents
-                        full_context = ""
-                        if combined_doc_text:
-                            full_context += f"Uploaded Documents:\n{combined_doc_text}\n\n"
-                        if vector_context:
-                            full_context += f"Legal Database Context:\n{vector_context}"
-                        
-                        # Prepare prompt with context and chat history
-                        chat_history = memory.load_memory_variables({})['history']
-                        
-                        if combined_doc_text:
-                            full_prompt = f"""You are a legal expert specializing in Indian law. The user has uploaded legal documents and is asking questions based on them.
-
-Uploaded Documents:
-{combined_doc_text}
-
-Legal Database Context:
-{vector_context}
-
-Conversation History:
-{chat_history}
-
-Current Question: {prompt}
-
-Please provide a professional legal response based on the uploaded documents first, then supplement with your knowledge of Indian law and the database context:"""
-                        else:
-                            full_prompt = f"""Legal Context:
-{vector_context}
-
-Conversation History:
-{chat_history}
-
-Current Question: {prompt}
-
-Please provide a professional legal response based on the context above:"""
-                        
-                        # Stream the response
-                        full_response = ""
-                        response_placeholder = st.empty()
-                        
-                        for chunk in llm.stream(full_prompt):
-                            print(type(chunk), chunk)
-                            full_response += chunk
-                            response_placeholder.markdown(full_response + "▋", unsafe_allow_html=True)
-                        
-                        # Final response without cursor
-                        response_placeholder.markdown(full_response)
-                        
-                        # Save assistant response with context
-                        save_message(
-                            st.session_state.current_chat_id, 
-                            "assistant", 
-                            full_response,
-                            retrieved_context=retrieved_docs,
-                            uploaded_file_text=combined_doc_text if combined_doc_text else None
-                        )
-                        memory.chat_memory.add_ai_message(full_response)
-                        
-                        # Show retrieved context in expander
-                        if retrieved_docs:
-                            with st.expander("📚 View Retrieved Legal Context"):
-                                for i, doc_content in enumerate(retrieved_docs, 1):
-                                    st.markdown(f"**Document {i}:**")
-                                    st.text(doc_content[:500] + "..." if len(doc_content) > 500 else doc_content)
-                                    if i < len(retrieved_docs):
-                                        st.divider()
-                    
-                    except Exception as e:
-                        st.error(f"Error generating response: {e}")
-                        error_response = "I apologize, but I encountered an error while processing your request. Please try again."
-                        st.markdown(error_response)
-                        save_message(st.session_state.current_chat_id, "assistant", error_response)
-            else:
-                error_msg = "Models not initialized. Please check your configuration."
-                st.error(error_msg)
-                save_message(st.session_state.current_chat_id, "assistant", error_msg)
+                        if retrieved_context:
+                            st.success(f"✅ Found {len(retrieved_context)} relevant legal references")
+                except Exception as e:
+                    st.warning(f"⚠️ Could not access legal database: {e}")
+            
+            # Prepare chat history
+            chat_history = ""
+            for role, content, _, _, _ in current_messages[-5:]:  # Last 5 messages
+                chat_history += f"{role.title()}: {content}\n"
+            
+            # Generate legal response
+            with st.spinner("⚖️ Crafting legal advice..."):
+                response = generate_legal_response(
+                    prompt, 
+                    chat_history, 
+                    uploaded_text, 
+                    retrieved_context
+                )
+            
+            # Generate contextual suggestions
+            suggestions = get_follow_up_suggestions(response)
+        
+        # Display response
+        st.markdown(response)
+        
+        # Show follow-up suggestions
+        if suggestions:
+            st.markdown("##### 💫 What would you like to do next?")
+            
+            # Create responsive columns
+            num_cols = min(len(suggestions), 3)
+            cols = st.columns(num_cols)
+            
+            for j, suggestion in enumerate(suggestions[:num_cols]):
+                with cols[j]:
+                    if st.button(
+                        suggestion, 
+                        key=f"response_suggest_{j}",
+                        use_container_width=True,
+                        type="secondary"
+                    ):
+                        st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
+                        st.rerun()
+    
+    # Save assistant response
+    save_message(
+        st.session_state.current_chat_id, 
+        "assistant", 
+        response, 
+        retrieved_context, 
+        suggestions=suggestions
+    )
+    
+    st.rerun()
 
 # --- Footer ---
-st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666;'>
-        <small>⚖️ Legal Adviser Bot - For informational purposes only. Apptunix Pvt. Ltd.</small>
-    </div> 
-    """, 
-    unsafe_allow_html=True
-)
+st.divider()
+st.markdown("""
+<div style='text-align: center; color: #6c757d; font-size: 0.9rem; padding: 1rem;'>
+    <p>⚖️ <strong>AI Legal Adviser</strong> | Professional Legal Guidance</p>
+    <p style='font-size: 0.8rem;'>
+        <em>This AI provides general legal information and should not replace professional legal advice. 
+        For specific legal matters, please consult with a qualified attorney.</em>
+    </p>
+    <p style='font-size: 0.8rem; margin-top: 1rem;'>
+        🔒 Your conversations are stored locally and kept confidential | 
+        📚 Powered by advanced AI and legal knowledge base
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
+# --- Additional Features ---
+
+# Keyboard shortcuts info
+with st.expander("⌨️ Keyboard Shortcuts & Tips"):
+    st.markdown("""
+    **Shortcuts:**
+    - `Ctrl + Enter` - Send message
+    - `Ctrl + /` - Focus on chat input
+    
+    **Tips for better results:**
+    - Be specific about your legal issue
+    - Mention relevant dates and locations
+    - Upload relevant documents for analysis
+    - Ask follow-up questions for clarification
+    
+    **Document Upload Tips:**
+    - Ensure text is clear and readable
+    - Use high-resolution images
+    - PDF format works best for multi-page documents
+    - Supported formats: PDF, PNG, JPG, JPEG
+    """)
+
+# Legal disclaimer
+with st.expander("⚠️ Important Legal Disclaimer"):
+    st.markdown("""
+    **IMPORTANT DISCLAIMER:**
+    
+    This AI Legal Adviser is designed to provide general legal information and guidance. It is not a substitute for professional legal advice from a qualified attorney.
+    
+    **Please note:**
+    - This service does not create an attorney-client relationship
+    - Information provided is for educational purposes only
+    - Laws vary by jurisdiction and change over time
+    - For specific legal matters, always consult with a licensed attorney
+    - Do not share sensitive personal information
+    
+    **Limitation of Liability:**
+    The creators of this AI tool are not responsible for any decisions made based on the information provided. Always seek professional legal counsel for important legal matters.
+    """)
+
+# Emergency legal resources
+with st.expander("🆘 Emergency Legal Resources"):
+    st.markdown("""
+    **If you need immediate legal assistance:**
+    
+    **Legal Aid Services:**
+    - National Legal Services Authority (NALSA): [nalsa.gov.in](https://nalsa.gov.in)
+    - State Legal Services Authority in your state
+    - District Legal Services Authority in your district
+    
+    **Emergency Contacts:**
+    - Police: 100
+    - Women Helpline: 1091
+    - Child Helpline: 1098
+    - Senior Citizens Helpline: 14567
+    
+    **Online Legal Resources:**
+    - India Code: [indiacode.nic.in](https://indiacode.nic.in)
+    - Supreme Court of India: [sci.gov.in](https://sci.gov.in)
+    - Bar Council of India: [barcouncilofindia.org](https://barcouncilofindia.org)
+    """)
+
+# Analytics (optional - for usage tracking)
+if st.session_state.current_chat_id:
+    # Count messages in current chat
+    cursor.execute("SELECT COUNT(*) FROM messages WHERE chat_id = ?", (st.session_state.current_chat_id,))
+    message_count = cursor.fetchone()[0]
+    
+    # Count documents in current chat
+    cursor.execute("SELECT COUNT(*) FROM chat_documents WHERE chat_id = ?", (st.session_state.current_chat_id,))
+    doc_count = cursor.fetchone()[0]
+    
+    # Display stats in sidebar
+    with st.sidebar:
+        st.divider()
+        st.markdown("### 📊 Session Stats")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Messages", message_count)
+        with col2:
+            st.metric("Documents", doc_count)
