@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3, uuid, json, re, os
 from datetime import datetime
 from time import sleep
+from speech_integration import VoiceChat
 # import pytesseract
 import easyocr
 from PIL import Image
@@ -627,6 +628,7 @@ def load_chats():
     return cursor.fetchall()
 
 def get_messages(chat_id):
+    print(f"Fetching messages for chat_id: {chat_id}")  # Debug log
     if not chat_id:
         return []
     cursor.execute("SELECT role, content, retrieved_context, uploaded_file_text, suggestions FROM messages WHERE chat_id = ? ORDER BY created_at", (chat_id,))
@@ -653,6 +655,7 @@ def delete_chat(chat_id):
     conn.commit()
 
 def save_message(chat_id, role, content, retrieved_context=None, uploaded_file_text=None, suggestions=None):
+    print(f"Saving message: chat_id={chat_id}, role={role}, content={content[:50]}...")  # Debug log
     context_json = json.dumps(retrieved_context) if retrieved_context else None
     suggestions_json = json.dumps(suggestions) if suggestions else None
     cursor.execute(
@@ -725,8 +728,7 @@ def generate_legal_response(prompt, chat_history, doc_text="", retrieved_context
         context_str += f"\n\nUploaded Document Content:\n{doc_text[:1500]}..."
     
     # Enhanced prompt template
-    enhanced_prompt = f"""
-You are an expert AI Legal Adviser specializing in Indian law. Your role is to provide accurate, professional, and actionable legal guidance.
+    enhanced_prompt = f"""You are an expert AI Legal Adviser specializing in Indian law. Your role is to provide accurate, professional, and actionable legal guidance.
 
 Context Information:{context_str}
 
@@ -743,21 +745,41 @@ Please provide a comprehensive response that:
 5. Suggests next steps where appropriate
 6. Mentions when professional legal consultation is recommended
 
-Format your response professionally with clear sections where appropriate.
-"""
+Format your response professionally with clear sections where appropriate."""
 
     try:
+        # Initialize response generation
         full_response = ""
-        response_placeholder = st.empty()
         
+        # Process response stream        # Process response stream
         for chunk in llm.stream(enhanced_prompt):
-            print(type(chunk), chunk)
-            full_response += chunk
-            response_placeholder.markdown(full_response + "▋", unsafe_allow_html=True)
+            if isinstance(chunk, dict):
+                content = chunk.get("message", {}).get("content", "")
+                if content:
+                    full_response += content
+                    yield content
+            elif isinstance(chunk, str):
+                full_response += chunk
+                yield chunk
+        
+        # For non-streaming calls, return the full response
+        if not full_response:
+            response = llm(enhanced_prompt)
+            if isinstance(response, dict):
+                return str(response.get("message", {}).get("content", "Error: Empty response"))
+            return str(response)
+        
         return full_response
-        return response
+            
     except Exception as e:
-        return f"I apologize, but I encountered an error while processing your request. Please try rephrasing your question or contact support if the issue persists. Error details: {str(e)}"
+        error_msg = f"I apologize, but I encountered an error while processing your request. Please try rephrasing your question or contact support if the issue persists. Error details: {str(e)}"
+        yield error_msg
+
+def get_vectordb():
+    """Get the vector database for context retrieval"""
+    if 'vector_db' not in st.session_state:
+        st.session_state.vector_db, st.session_state.llm = init_models()
+    return st.session_state.vector_db
 
 # --- Initialize Session State ---
 if 'current_chat_id' not in st.session_state:
@@ -772,6 +794,12 @@ if 'messages_loaded' not in st.session_state:
 
 if 'show_suggestions' not in st.session_state:
     st.session_state.show_suggestions = True
+
+# Initialize voice chat state
+if 'voice_chat_active' not in st.session_state:
+    st.session_state.voice_chat_active = False
+if 'voice_chat' not in st.session_state:
+    st.session_state.voice_chat = None
 
 # --- Ensure the app displays content properly
 # st.title("⚖️ AI Legal Adviser")
@@ -842,12 +870,18 @@ with st.sidebar:
                 
                 with col2:
                     if st.button("🗑️", key=f"delete_{chat_id}", help="Delete chat"):
+                        # Delete current chat
                         delete_chat(chat_id)
+
+                        # Update session state with new chat ID
                         remaining_chats = load_chats()
                         if remaining_chats:
                             st.session_state.current_chat_id = remaining_chats[0][0]
                         else:
-                            st.session_state.current_chat_id = create_new_chat()
+                            # Create a new chat if we deleted the last one
+                            new_chat_id = create_new_chat()
+                            st.session_state.current_chat_id = new_chat_id
+                        
                         st.session_state.messages_loaded = False
                         st.rerun()
     else:
@@ -857,8 +891,8 @@ with st.sidebar:
 st.markdown("# ⚖️ AI Legal Adviser")
 st.markdown("*Professional legal guidance powered by AI*")
 
-# Enhanced File Upload Section
-st.markdown("### 📁 Upload Legal Document")
+# File Upload Section
+st.subheader("📁 Upload Legal Document")
 col1, col2 = st.columns([1, 1])
 
 with col1:
@@ -879,64 +913,68 @@ with col2:
     - High resolution for image files
     """)
 
+# Voice Chat Integration
+st.markdown("### 🎙️ Voice Chat")
+col1, col2 = st.columns(2)
+
+with col1:
+    start_voice = st.button(
+        "Start Voice Chat",
+        key="start_voice",
+        help="Click to start voice conversation with the AI",
+        use_container_width=True
+    )
+    
+with col2:
+    stop_voice = st.button(
+        "Stop Voice Chat",
+        key="stop_voice",
+        help="Click to stop voice conversation",
+        use_container_width=True,
+        type="secondary"
+    )
+
+# Initialize voice chat state if not exists
+if 'voice_chat_active' not in st.session_state:
+    st.session_state.voice_chat_active = False
+if 'voice_chat' not in st.session_state:
+    st.session_state.voice_chat = None
+
+# Handle voice chat controls
+if start_voice and not st.session_state.voice_chat_active:
+    st.session_state.voice_chat_active = True
+    st.session_state.voice_chat = VoiceChat(
+        save_message_callback=save_message,
+        chat_id=st.session_state.current_chat_id,
+        vector_db=vector_db,
+        generate_legal_response_callback=generate_legal_response
+    )
+    st.session_state.voice_chat.start()
+    st.rerun()
+
+if stop_voice and st.session_state.voice_chat_active:
+    if st.session_state.voice_chat:
+        st.session_state.voice_chat.stop_speaking = True
+        del st.session_state.voice_chat
+    st.session_state.voice_chat_active = False
+    st.rerun()
+
+if st.session_state.voice_chat_active:
+    st.markdown("""
+    <div style="padding: 1rem; border-radius: 0.5rem; background-color: #f8f9fa; margin: 1rem 0;">
+        <h4 style="margin: 0;">🎙️ Voice Chat Active</h4>
+        <p style="margin: 0.5rem 0;">
+            Speak clearly into your microphone to ask questions.<br>
+            Press SPACE to stop AI's response at any time.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.divider()
+
+# Continue with existing chat interface
 uploaded_text = ""
 doc_analysis_done = False
-
-if uploaded_file:
-    with st.spinner("🔍 Analyzing your document..."):
-        progress_bar = st.progress(0)
-        
-        # Simulate progress
-        for i in range(100):
-            sleep(0.01)
-            progress_bar.progress(i + 1)
-        
-        if uploaded_file.type == "application/pdf":
-            uploaded_text = extract_text_from_pdf(uploaded_file)
-        else:
-            image = Image.open(uploaded_file)
-            extracted_text = extract_text_from_image(image)
-            uploaded_text = "".join([detection[1] for detection in extracted_text if isinstance(detection, tuple)])
-        
-    
-    if uploaded_text.strip():
-        save_document_to_chat(
-            st.session_state.current_chat_id, 
-            uploaded_file.name, 
-            uploaded_file.type, 
-            uploaded_text
-        )
-        
-        # Enhanced document analysis card
-        st.markdown(f"""
-        <div class="doc-analysis-card">
-            <h3>📄 Document Successfully Analyzed</h3>
-            <p><strong>File:</strong> {uploaded_file.name}</p>
-            <p><strong>Type:</strong> {uploaded_file.type}</p>
-            <p><strong>Text Extracted:</strong> {len(uploaded_text)} characters</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Show suggestions based on document type
-        suggestions = get_document_suggestions(uploaded_file.name, uploaded_text)
-        
-        st.markdown("#### 💡 What would you like me to help you with?")
-        
-        # Create suggestion buttons
-        cols = st.columns(2)
-        for i, suggestion in enumerate(suggestions):
-            with cols[i % 2]:
-                if st.button(suggestion, key=f"doc_suggest_{i}", use_container_width=True):
-                    # Auto-populate chat with suggestion
-                    st.session_state[f"suggested_prompt_{st.session_state.current_chat_id}"] = suggestion
-                    st.rerun()
-        
-        with st.expander("📄 View Extracted Content"):
-            st.text_area("Document Content:", uploaded_text, height=300, disabled=True)
-        
-        doc_analysis_done = True
-    else:
-        st.error("❌ No readable text found. Please ensure the document is clear and try again.")
 
 # Display chat documents summary
 chat_docs = get_chat_documents(st.session_state.current_chat_id)
@@ -963,6 +1001,8 @@ for i, (role, content, retrieved_context, file_text, suggestions) in enumerate(c
         message_id = f"msg_{i}"
         is_email = any(keyword in content.lower() for keyword in ["email draft", "legal notice", "letter"])
         if role == "user":
+            st.markdown(f'<div id="{message_id}" class="chat-message {role}">{content}</div>', unsafe_allow_html=True)
+        elif role == "assistant" and not suggestions:
             st.markdown(f'<div id="{message_id}" class="chat-message {role}">{content}</div>', unsafe_allow_html=True)
         # Show suggestions for assistant messages
         if role == "assistant" and suggestions:
