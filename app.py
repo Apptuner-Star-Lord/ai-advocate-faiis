@@ -612,7 +612,7 @@ def init_models():
         if os.getenv('env') == 'LOCAL':
             llm = OllamaLLM(model="mistral", temperature=0.1, max_tokens=512)
         else:
-            llm = OllamaLLM(base_url='https://a97b-112-196-43-19.ngrok-free.app', model="mistral", temperature=0.1, max_tokens=512)
+            llm = OllamaLLM(base_url='https://37b5-112-196-43-19.ngrok-free.app', model="mistral", temperature=0.1, max_tokens=512)
 
         return vectordb, llm
     except Exception as e:
