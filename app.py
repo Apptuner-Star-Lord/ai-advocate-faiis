@@ -176,6 +176,7 @@ header {visibility: hidden;}
     border-radius: 12px;
     padding: 2rem;
     height: 220px;
+    color: #000;
     text-align: center;
     background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
     transition: all 0.3s ease;
